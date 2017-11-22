@@ -6,3 +6,8 @@ data
 !data/audio/playlists/*
 *.exe
 *.dll
+bin
+etc
+lib
+local
+share
