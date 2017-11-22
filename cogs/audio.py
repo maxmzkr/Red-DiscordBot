@@ -400,7 +400,7 @@ class Audio:
         self.queue[server.id][QueueKey.QUEUE] = deque()
         self.queue[server.id][QueueKey.TEMP_QUEUE] = deque()
 
-    async def _create_ffmpeg_player(self, server, filename, local=False, start_time=None, end_time=None):
+    async def _create_ffmpeg_player(self, server, filename, local=False, start_time=None, end_time=None, loudnorm=True):
         """This function will guarantee we have a valid voice client,
             even if one doesn't exist previously."""
         voice_channel_id = self.queue[server.id][QueueKey.VOICE_CHANNEL_ID]
@@ -439,6 +439,8 @@ class Audio:
             before_options += '-ss {}'.format(start_time)
         if end_time:
             options += ' -to {} -copyts'.format(end_time)
+        if loudnorm:
+            options += ' -af loudnorm=I=-16.0:TP=-1.0'
 
         try:
             voice_client.audio_player.process.kill()
