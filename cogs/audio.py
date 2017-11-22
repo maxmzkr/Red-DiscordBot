@@ -146,13 +146,14 @@ class Song:
         self.url = kwargs.pop('url', None)
         self.webpage_url = kwargs.pop('webpage_url', "")
         self.duration = kwargs.pop('duration', 60)
-        self.start_time = kwargs.pop('start_time', None)
+        self.start_time = kwargs.pop('start_time', 0) or 0
         self.end_time = kwargs.pop('end_time', None)
 
 class QueuedSong:
-    def __init__(self, url, channel):
+    def __init__(self, url, channel, length):
         self.url = url
         self.channel = channel
+        self.length = length
 
 class Playlist:
     def __init__(self, server=None, sid=None, name=None, author=None, url=None,
@@ -334,10 +335,10 @@ class Audio:
         await self.bot.change_presence(status=status, game=game)
         log.debug('Bot status changed to song title: ' + song.title)
 
-    def _add_to_queue(self, server, url, channel):
+    def _add_to_queue(self, server, url, channel, play_for):
         if server.id not in self.queue:
             self._setup_queue(server)
-        queued_song = QueuedSong(url, channel)
+        queued_song = QueuedSong(url, channel, play_for)
         self.queue[server.id][QueueKey.QUEUE].append(queued_song)
 
     def _add_to_temp_queue(self, server, url, channel):
@@ -858,7 +859,7 @@ class Audio:
 
         return playlist
 
-    async def _play(self, sid, url, channel):
+    async def _play(self, sid, url, channel, length):
         """Returns the song object of what's playing"""
         if type(sid) is not discord.Server:
             server = self.bot.get_server(sid)
@@ -892,6 +893,11 @@ class Audio:
             except FileNotFoundError:
                 raise
 
+        if length:
+            if song.end_time:
+                song.end_time = min(song.end_time, song.start_time + length)
+            else:
+                song.end_time = song.start_time + length
         voice_client = await self._create_ffmpeg_player(server, song.id,
                                                         local=local,
                                                         start_time=song.start_time,
@@ -1417,9 +1423,7 @@ class Audio:
         else:
             await self.bot.say("Nothing playing, nothing to pause.")
 
-    @commands.command(pass_context=True, no_pm=True)
-    async def play(self, ctx, *, url_or_search_terms):
-        """Plays a link / searches and play"""
+    async def _play_for(self, ctx, length, url_or_search_terms):
         url = url_or_search_terms
         server = ctx.message.server
         author = ctx.message.author
@@ -1485,7 +1489,27 @@ class Audio:
 
         self._stop_player(server)
         self._clear_queue(server)
-        self._add_to_queue(server, url, channel)
+        self._add_to_queue(server, url, channel, length)
+
+    @commands.command(pass_context=True, no_pm=True)
+    async def play(self, ctx, *, url_or_search_terms):
+        """Plays a link / searches and play"""
+        await self._play_for(ctx, None, url_or_search_terms)
+
+    @commands.command(pass_context=True, no_pm=True, name="playfor")
+    async def play_for(self, ctx, *, length_url_or_search_terms):
+        """Plays a link / searches and play for a given length"""
+        try:
+            length, url_or_search_terms = length_url_or_search_terms.split(' ', maxsplit=1)
+        except ValueError:
+            await self.say("Command must be of the form, <seconds to play> <url or search terms>")
+            return
+        try:
+            length = int(length)
+        except ValueError:
+            await self.say("length must be an integer")
+            return
+        await self._play_for(ctx, length, url_or_search_terms)
 
     @commands.command(pass_context=True, no_pm=True)
     async def prev(self, ctx):
@@ -1640,7 +1664,7 @@ class Audio:
                                     " happen.")
 
         # We have a queue to modify
-        self._add_to_queue(server, url, channel)
+        self._add_to_queue(server, url, channel, None)
 
         await self.bot.say("Queued.")
 
@@ -1770,7 +1794,7 @@ class Audio:
         else:
             log.debug("queueing to the actual queue for sid {}".format(
                 server.id))
-            self._add_to_queue(server, url, channel)
+            self._add_to_queue(server, url, channel, None)
         await self.bot.say("Queued.")
 
     async def _queue_list(self, ctx):
@@ -2076,9 +2100,9 @@ class Audio:
 
             for server in stop_times:
                 if stop_times[server] and \
-                        int(time.time()) - stop_times[server] > 300:
+                        int(time.time()) - stop_times[server] > 7200:
                     # 5 min not playing to d/c
-                    log.debug("dcing from sid {} after 300s".format(server.id))
+                    log.debug("dcing from sid {} after 7200s".format(server.id))
                     self._clear_queue(server)
                     await self._stop_and_disconnect(server)
                     stop_times[server] = None
@@ -2163,16 +2187,18 @@ class Audio:
                     queued_song = temp_queue.popleft()
                     url = queued_song.url
                     channel = queued_song.channel
-                    song = await self._play(sid, url, channel)
+                    length = queued_song.length
+                    song = await self._play(sid, url, channel, length)
                 except MaximumLength:
                     return
             elif len(queue) > 0:  # We're in the normal queue
                 queued_song = queue.popleft()
                 url = queued_song.url
                 channel = queued_song.channel
+                length = queued_song.length
                 log.debug("calling _play on the normal queue")
                 try:
-                    song = await self._play(sid, url, channel)
+                    song = await self._play(sid, url, channel, length)
                 except MaximumLength:
                     return
                 if repeat and last_song:
