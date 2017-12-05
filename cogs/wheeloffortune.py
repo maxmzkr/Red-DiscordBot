@@ -31,7 +31,7 @@ class WheelOfFortune:
         settings = dataIO.load_json(self.file_path)
         self.settings = defaultdict(lambda: DEFAULTS.copy(), settings)
 
-    @commands.group(pass_context=True, no_pm=True)
+    @commands.group(pass_context=True, no_pm=True, aliases=['wheeloffortune_set', 'wofset'])
     @checks.mod_or_permissions(administrator=True)
     async def wheel_of_fortune_set(self, ctx):
         """Change Wheel Of Fortune settings"""
@@ -56,7 +56,7 @@ class WheelOfFortune:
             await self.bot.say("Score must be superior to 0.")
 
     @wheel_of_fortune_set.command(pass_context=True)
-    async def botplays(self, ctx):
+    async def boyplays(self, ctx):
         """Red gains points"""
         server = ctx.message.server
         if self.settings[server.id]["BOT_PLAYS"]:
@@ -67,7 +67,7 @@ class WheelOfFortune:
             await slf.bot.say("I'll gain a point everytime you don't answer in time.")
         self.save_settings()
 
-    @commands.group(pass_context=True, invoke_without_command=True, no_pm=True)
+    @commands.group(pass_context=True, invoke_without_command=True, no_pm=True, aliases=['wheeloffortune', 'wof'])
     async def wheel_of_fortune(self, ctx):
         """Start a Wheel Of Fortune session"""
         message = ctx.message
@@ -138,10 +138,9 @@ class WheelOfFortune:
         return None
 
     async def on_message(self, message):
-        if message.author != self.bot.user:
-            session = self.get_wheel_of_fortune_by_channel(message.channel)
-            if session:
-                await session.check_answer(message)
+        session = self.get_wheel_of_fortune_by_channel(message.channel)
+        if session:
+            await session.check_answer(message)
 
     async def on_wheel_of_fortune_end(self, instance):
         if instance in self.wheel_of_fortune_sessions:
@@ -172,6 +171,7 @@ class WheelOfFortuneSession():
         self.timeout= time.perf_counter()
         self.count = 0
         self.settings = settings
+        self.last_printed_phrase = None
 
     async def stop_wheel_of_fortune(self):
         self.status = "stop"
@@ -225,11 +225,13 @@ class WheelOfFortuneSession():
         # check if game was killed
         if self.status == "stop":
             await self.bot.say("Done so soon? Enjoy shooting boys!")
-            await self.end_game()
             return True
 
+        self.last_printed_phrase = None
         await self.bot.say("The answer was:")
+        self.current_missing = []
         await self.print_phrase()
+        self.last_printed_phrase = None
 
         # give bot a point if no one guessed
         if not self.current_missing:
@@ -240,7 +242,6 @@ class WheelOfFortuneSession():
                 self.scores[self.bot.user] += 1
             self.current_phrase = None
             await self.bot.type()
-            await asyncio.sleep(3)
 
         # check if answer was guessed
         for score in self.scores.values():
@@ -248,15 +249,20 @@ class WheelOfFortuneSession():
                 await self.end_game()
                 return True
 
+
+        await self.bot.say("Current score is:")
+        await self.send_table()
+
+
         # start next question
         if self.status == "correct answer":
             self.status = "new question"
-            await asyncio.sleep(3)
+
+        await asyncio.sleep(3)
 
         # we need to recheck because we slept and it's been a while
         if self.status == "stop":
             await self.bot.say("Done so soon? Enjoy shooting boys!")
-            await self.end_game()
             return True
 
         await self.new_question()
@@ -266,7 +272,11 @@ class WheelOfFortuneSession():
         printed_phrase = "║{}║".format("│".join("█" if x in self.current_missing else x for x in self.current_phrase))
         bottom_bar = "╚{}╝".format("╧".join("═" for _ in range(len(self.current_phrase))))
         msg = box("{}\n{}\n{}\n\n{}".format(top_bar, printed_phrase, bottom_bar, self.current_category))
-        await self.bot.say(msg)
+        if self.last_printed_phrase is None:
+            self.last_printed_phrase = await self.bot.say(msg)
+            await self.bot.edit_message(self.last_printed_phrase, msg)
+        else:
+            await self.bot.edit_message(self.last_printed_phrase, msg)
 
     async def send_table(self):
         t = "+ Results: \n\n"
@@ -275,6 +285,8 @@ class WheelOfFortuneSession():
         await self.bot.say(box(t, lang="diff"))
 
     async def check_answer(self, message):
+        if self.last_printed_phrase is not None and message.id != self.last_printed_phrase.id:
+            self.last_printed_phrase = None
         if message.author == self.bot.user:
             return
         elif self.current_phrase is None:
@@ -289,10 +301,9 @@ class WheelOfFortuneSession():
             has_guessed = True
 
         if has_guessed and self.status == "waiting for answer" and self.current_missing:
+            self.scores[message.author] += len(self.current_missing)
             self.status = "correct answer"
-            self.scores[message.author] += 1
-            msg = "You got it {}! **+1** to you!".format(message.author.name)
-            self.current_missing = []
+            msg = "You got it {}! **+{}** to you!".format(message.author.name, len(self.current_missing))
             await self.bot.send_message(message.channel, msg)
 
 
