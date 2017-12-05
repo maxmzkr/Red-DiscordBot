@@ -438,7 +438,11 @@ class Audio:
         if start_time:
             before_options += '-ss {}'.format(start_time)
         if end_time:
-            options += ' -to {} -copyts'.format(end_time)
+            if start_time is not None:
+                duration = end_time - start_time
+            else:
+                duration = end_time
+            options += ' -to {} -copyts'.format(duration)
         if loudnorm:
             options += ' -af loudnorm=I=-16.0:TP=-1.0'
 
