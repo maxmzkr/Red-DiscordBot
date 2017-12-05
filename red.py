@@ -91,6 +91,26 @@ class Bot(commands.Bot):
 
         return await super().send_message(*args, **kwargs)
 
+    async def edit_message(self, *args, **kwargs):
+        if self._message_modifiers:
+            if "content" in kwargs:
+                pass
+            elif len(args) == 2:
+                args = list(args)
+                kwargs["content"] = args.pop()
+            else:
+                return await super().edit_message(*args, **kwargs)
+
+            content = kwargs['content']
+            for m in self._message_modifiers:
+                try:
+                    content = str(m(content))
+                except:   # Faulty modifiers should not
+                    pass  # break send_message
+            kwargs['content'] = content
+
+        return await super().edit_message(*args, **kwargs)
+
     async def shutdown(self, *, restart=False):
         """Gracefully quits Red with exit code 0
 
